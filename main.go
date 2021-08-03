@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/avast/retry-go"
 	client "github.com/cosmos/cosmos-sdk/client/context"
 	"github.com/cosmos/cosmos-sdk/codec"
 	simapp "github.com/cosmos/cosmos-sdk/simapp"
@@ -17,10 +18,13 @@ import (
 	staktypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
-	start = int64(1354579) // midnight 1/1/2021
+	// start = int64(1354580) // midnight 1/1/2021
+	// end   = int64(2274386) // midnight 3/8/2021
+	start = int64(1361100) // midnight 1/1/2021
 	end   = int64(2274386) // midnight 3/8/2021
 	val   = "akash1lhenngdge40r5thghzxqpsryn4x084m9jkpdg2"
 	cdc   *codec.Codec
@@ -90,13 +94,13 @@ func makebm() (map[time.Time]*ctypes.ResultBlock, []time.Time) {
 }
 
 type accountBlockData struct {
-	Height     int64     `json:"height"`
-	Balance    sdk.Coin  `json:"balance"`
-	Staked     sdk.Coin  `json:"staked"`
-	Rewards    sdk.Coin  `json:"rewards"`
-	Commission sdk.Coin  `json:"commission"`
-	Time       time.Time `json:"time"`
-	Price      float64   `json:"price"`
+	Height     int64    `json:"height"`
+	Balance    sdk.Coin `json:"balance"`
+	Staked     sdk.Coin `json:"staked"`
+	Rewards    sdk.Coin `json:"rewards"`
+	Commission sdk.Coin `json:"commission"`
+	// Time       time.Time `json:"time"`
+	Price float64 `json:"price"`
 }
 
 func getHeightData(height int64, addr sdk.AccAddress) (accountBlockData, error) {
@@ -108,32 +112,29 @@ func getHeightData(height int64, addr sdk.AccAddress) (accountBlockData, error) 
 	)
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			com, err = cr.ValidatorCommissionAtHeight(height, val)
+			com, err = getCommissionBalance(val, height)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			bal, err = cr.AccountBalanceAtHeight(height, addr)
+			bal, err = getAccountBalance(addr, height)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			rew, err = cr.AccountRewardsAtHeight(height, addr)
+			rew, err = getRewardsBalance(addr, height)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			stk, err = cr.StakedTokens(height, addr)
+			stk, err = getStakedBalance(addr, height)
 			return err
 		})
 	})
-	if err := eg.Wait(); err != nil {
-		return AccountBlockData{}, err
-	}
-	return AccountBlockData{height, bal, stk, rew, com, date, 0}, nil
+	return accountBlockData{height, bal, stk, rew, com, 0}, nil
 }
 
 // account balance
