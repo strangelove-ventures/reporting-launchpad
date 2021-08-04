@@ -33,27 +33,29 @@ func makebm() (map[time.Time]*ctypes.ResultBlock, []time.Time) {
 	cli := ctx(start)
 	stbl, err := cli.Client.Block(&start)
 	if err != nil {
-		log.Fatal("querystartblock", err)
+		log.Fatal(err)
 	}
 	edbl, err := cli.Client.Block(&end)
 	if err != nil {
-		log.Fatal("queryendblock", err)
+		log.Fatal(err)
 	}
 
 	var (
-		spb      = float64(end-start) / edbl.Block.Time.Sub(stbl.Block.Time).Seconds()
+		spb      = stbl.Block.Time.Sub(edbl.Block.Time).Seconds() / float64(start-end)
 		blockmap = map[time.Time]*ctypes.ResultBlock{}
 		dates    = makedates(stbl.Block.Time, edbl.Block.Time)
 	)
+
 	blockmap[stbl.Block.Time] = stbl
 	blockmap[edbl.Block.Time] = edbl
 
-	for _, date := range dates {
+	iterdates := dates[1 : len(dates)-1]
+
+	for _, date := range iterdates {
 		nh := nbh(stbl, date, spb)
 		estbl, err := cli.Client.Block(&nh)
 		if err != nil {
-			fmt.Println(spb, nh, stbl.Block.Height)
-			log.Fatal("1ffff", err)
+			log.Fatal(err)
 		}
 
 		spb = secpb(stbl, estbl)
@@ -63,13 +65,12 @@ func makebm() (map[time.Time]*ctypes.ResultBlock, []time.Time) {
 			nh := nbh(stbl, date, spb)
 			estbl, err = cli.Client.Block(&nh)
 			if err != nil {
-				log.Fatal("2", err)
+				log.Fatal(err)
 			}
 			spb = secpb(stbl, estbl)
 			diff = date.Sub(estbl.Block.Time)
 		}
 		blockmap[date] = estbl
-		//stbl = estbl
 	}
 	return blockmap, dates
 }
