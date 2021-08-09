@@ -101,24 +101,28 @@ func getHeightData(height int64, addr sdk.AccAddress, endpoint, chainid, denom s
 	eg.Go(func() error {
 		return retry.Do(func() error {
 			com, err = getCommissionBalance(val, height, endpoint, chainid, denom)
+			fmt.Println("getCommissionBalance", err)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
 			bal, err = getAccountBalance(addr, height, endpoint, chainid, denom)
+			fmt.Println("getAccountBalance", err)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
 			rew, err = getRewardsBalance(addr, height, endpoint, chainid, denom)
+			fmt.Println("getRewardsBalance", err)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
 			stk, err = getStakedBalance(addr, height, endpoint, chainid, denom)
+			fmt.Println("getStakedBalance", err)
 			return err
 		})
 	})
@@ -157,7 +161,7 @@ func getRewardsBalance(acc sdk.AccAddress, height int64, endpoint, chainid, deno
 	}
 
 	var result disttypes.QueryDelegatorTotalRewardsResponse
-	if err = cdc.UnmarshalJSON(res, &result); err != nil {
+	if err = json.Unmarshal(res, &result); err != nil {
 		return sdk.Coin{}, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	out := sdk.NewCoin(denom, sdk.ZeroInt())
@@ -175,7 +179,9 @@ func getCommissionBalance(val sdk.ValAddress, height int64, endpoint, chainid, d
 		return sdk.Coin{}, err
 	}
 	var valCom disttypes.ValidatorAccumulatedCommission
-	cdc.MustUnmarshalJSON(res, &valCom)
+	if err := json.Unmarshal(res, &valCom); err != nil {
+		return sdk.Coin{}, err
+	}
 	return sdk.NewCoin(denom, valCom.AmountOf(denom).RoundInt()), nil
 }
 
@@ -195,7 +201,7 @@ func getStakedBalance(acc sdk.AccAddress, height int64, endpoint, chainid, denom
 	}
 
 	var resp staketypes.DelegationResponses
-	if err := cdc.UnmarshalJSON(res, &resp); err != nil {
+	if err := json.Unmarshal(res, &resp); err != nil {
 		return sdk.Coin{}, err
 	}
 	out := sdk.NewCoin(denom, sdk.ZeroInt())

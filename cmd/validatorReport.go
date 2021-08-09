@@ -69,6 +69,7 @@ var accountSelectCmd = &cobra.Command{
 				if err != nil {
 					return err
 				}
+				fmt.Println(bd)
 				price, err := GetPrice(k, args[5])
 				if err != nil {
 					return err
