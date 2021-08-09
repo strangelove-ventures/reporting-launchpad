@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 
 	simapp "github.com/cosmos/cosmos-sdk/simapp"
 	"github.com/spf13/cobra"
@@ -24,34 +25,27 @@ import (
 
 // dayBlocksCmd represents the dayBlocks command
 var dayBlocksCmd = &cobra.Command{
-	Use:   "dayBlocks",
+	Use:   "dayBlocks [endpoint] [start] [end]",
 	Short: "A brief description of your command",
-	Run: func(cmd *cobra.Command, args []string) {
-		setSDKContext()
-		// addr, err := sdk.AccAddressFromBech32(val)
-		// if err != nil {
-		// 	log.Fatal(err)
-		//}
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// TODO: validation on the endpoint
+		start, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil {
+			return err
+		}
+		end, err := strconv.ParseInt(args[2], 10, 64)
+		if err != nil {
+			return err
+		}
 		cdc = simapp.MakeCodec()
-		blocks, dates := makebm()
+		blocks, dates := makebm(args[0], start, end)
 		for _, d := range dates {
 			fmt.Println(d, blocks[d].Block.Height)
 		}
-
-		//fmt.Println(bal)
+		return nil
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(dayBlocksCmd)
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// dayBlocksCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// dayBlocksCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }

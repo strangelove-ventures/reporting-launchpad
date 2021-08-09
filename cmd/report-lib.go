@@ -23,14 +23,14 @@ import (
 var (
 	// start = int64(1354580) // midnight 1/1/2021
 	// end   = int64(2274386) // midnight 3/8/2021
-	start = int64(1)
-	end   = int64(1536089)
-	val   = "kava16lnfpgn6llvn4fstg5nfrljj6aaxyee90zl6c6"
-	cdc   *codec.Codec
+	// start = int64(1)
+	// end   = int64(1536089)
+	val = "kava16lnfpgn6llvn4fstg5nfrljj6aaxyee90zl6c6"
+	cdc *codec.Codec
 )
 
-func makebm() (map[time.Time]*ctypes.ResultBlock, []time.Time) {
-	cli := ctx(start)
+func makebm(endpoint string, start, end int64) (map[time.Time]*ctypes.ResultBlock, []time.Time) {
+	cli := ctx(start, endpoint)
 	stbl, err := cli.Client.Block(&start)
 	if err != nil {
 		log.Fatal(err)
@@ -85,7 +85,7 @@ type accountBlockData struct {
 	Price float64 `json:"price"`
 }
 
-func getHeightData(height int64, addr sdk.AccAddress) (accountBlockData, error) {
+func getHeightData(height int64, addr sdk.AccAddress, endpoint string) (accountBlockData, error) {
 	var (
 		val                = sdk.ValAddress(addr)
 		eg                 = errgroup.Group{}
@@ -94,25 +94,25 @@ func getHeightData(height int64, addr sdk.AccAddress) (accountBlockData, error) 
 	)
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			com, err = getCommissionBalance(val, height)
+			com, err = getCommissionBalance(val, height, endpoint)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			bal, err = getAccountBalance(addr, height)
+			bal, err = getAccountBalance(addr, height, endpoint)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			rew, err = getRewardsBalance(addr, height)
+			rew, err = getRewardsBalance(addr, height, endpoint)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			stk, err = getStakedBalance(addr, height)
+			stk, err = getStakedBalance(addr, height, endpoint)
 			return err
 		})
 	})
@@ -120,8 +120,8 @@ func getHeightData(height int64, addr sdk.AccAddress) (accountBlockData, error) 
 }
 
 // account balance
-func getAccountBalance(acc sdk.AccAddress, height int64) (sdk.Coin, error) {
-	cli := ctx(height)
+func getAccountBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint)
 	accGetter := authtypes.NewAccountRetriever(cli)
 	res, err := accGetter.GetAccount(acc)
 	if err != nil {
@@ -132,8 +132,8 @@ func getAccountBalance(acc sdk.AccAddress, height int64) (sdk.Coin, error) {
 }
 
 // rewards
-func getRewardsBalance(acc sdk.AccAddress, height int64) (sdk.Coin, error) {
-	cli := ctx(height)
+func getRewardsBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint)
 	params := disttypes.NewQueryDelegatorParams(acc)
 	bz, err := cdc.MarshalJSON(params)
 	if err != nil {
@@ -159,8 +159,8 @@ func getRewardsBalance(acc sdk.AccAddress, height int64) (sdk.Coin, error) {
 }
 
 // commission
-func getCommissionBalance(val sdk.ValAddress, height int64) (sdk.Coin, error) {
-	cli := ctx(height)
+func getCommissionBalance(val sdk.ValAddress, height int64, endpoint string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint)
 	res, err := distcommon.QueryValidatorCommission(cli, "distribution", val)
 	if err != nil {
 		return sdk.Coin{}, err
@@ -171,8 +171,8 @@ func getCommissionBalance(val sdk.ValAddress, height int64) (sdk.Coin, error) {
 }
 
 // staked tokens
-func getStakedBalance(acc sdk.AccAddress, height int64) (sdk.Coin, error) {
-	cli := ctx(height)
+func getStakedBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint)
 	bz, err := cdc.MarshalJSON(staktypes.NewQueryDelegatorParams(acc))
 	if err != nil {
 		return sdk.Coin{}, err
@@ -193,6 +193,10 @@ func getStakedBalance(acc sdk.AccAddress, height int64) (sdk.Coin, error) {
 		out.Amount = out.Amount.Add(d.Balance.Amount)
 	}
 	return out, nil
+}
+
+func getStatus(endpoint string) (*ctypes.ResultStatus, error) {
+	return ctx(0, endpoint).Client.Status()
 }
 
 func nbh(startBlock *ctypes.ResultBlock, nextDate time.Time, secpb float64) int64 {
@@ -216,11 +220,11 @@ func makedates(startTime, endTime time.Time) []time.Time {
 }
 
 func midnight(t0 time.Time) time.Time {
-	return time.Date(t0.Year(), t0.Month(), t0.Day()+1, 0, 0, 0, 0, t0.Location())
+	return time.Date(t0.Year(), t0.Month(), t0.Day(), 0, 0, 0, 0, t0.Location())
 }
 
-func ctx(height int64) client.CLIContext {
-	rpc, err := rpchttp.New("https://rpc.data.kava.io:443", "/websocket")
+func ctx(height int64, endpoint string) client.CLIContext {
+	rpc, err := rpchttp.New(endpoint, "/websocket")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -235,7 +239,7 @@ func ctx(height int64) client.CLIContext {
 		TrustNode:    true,
 		Indent:       false,
 		SkipConfirm:  true,
-		NodeURI:      "http://localhost:26657",
+		NodeURI:      endpoint,
 	}
 }
 
@@ -243,9 +247,9 @@ func secpb(b0, b1 *ctypes.ResultBlock) float64 {
 	return b0.Block.Time.Sub(b1.Block.Time).Seconds() / float64(b0.Block.Height-b1.Block.Height)
 }
 
-func setSDKContext() {
+func setSDKContext(prefix string) {
 	config := sdk.GetConfig()
-	config.SetBech32PrefixForAccount("kava", "kavapub")
-	config.SetBech32PrefixForValidator("kavavaloper", "kavavaloperpub")
-	config.SetBech32PrefixForConsensusNode("kavavalcons", "kavavalconspub")
+	config.SetBech32PrefixForAccount(fmt.Sprintf("%s", prefix), fmt.Sprintf("%spub", prefix))
+	config.SetBech32PrefixForValidator(fmt.Sprintf("%svaloper", prefix), fmt.Sprintf("%svaloperpub", prefix))
+	config.SetBech32PrefixForConsensusNode(fmt.Sprintf("%svalcons", prefix), fmt.Sprintf("%svalconspub", prefix))
 }
