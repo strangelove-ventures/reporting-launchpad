@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -10,11 +11,12 @@ import (
 	"github.com/avast/retry-go"
 	client "github.com/cosmos/cosmos-sdk/client/context"
 	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/cosmos/cosmos-sdk/simapp"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	distcommon "github.com/cosmos/cosmos-sdk/x/distribution/client/common"
 	disttypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
-	staktypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	staketypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	"golang.org/x/sync/errgroup"
@@ -25,12 +27,16 @@ var (
 	// end   = int64(2274386) // midnight 3/8/2021
 	// start = int64(1)
 	// end   = int64(1536089)
-	val = "kava16lnfpgn6llvn4fstg5nfrljj6aaxyee90zl6c6"
+	// val = "kava16lnfpgn6llvn4fstg5nfrljj6aaxyee90zl6c6"
 	cdc *codec.Codec
 )
 
 func makebm(endpoint string, start, end int64) (map[time.Time]*ctypes.ResultBlock, []time.Time) {
-	cli := ctx(start, endpoint)
+	stat, err := getStatus(endpoint)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cli := ctx(start, endpoint, stat.NodeInfo.Network)
 	stbl, err := cli.Client.Block(&start)
 	if err != nil {
 		log.Fatal(err)
@@ -76,16 +82,16 @@ func makebm(endpoint string, start, end int64) (map[time.Time]*ctypes.ResultBloc
 }
 
 type accountBlockData struct {
-	Height     int64    `json:"height"`
-	Balance    sdk.Coin `json:"balance"`
-	Staked     sdk.Coin `json:"staked"`
-	Rewards    sdk.Coin `json:"rewards"`
-	Commission sdk.Coin `json:"commission"`
-	// Time       time.Time `json:"time"`
-	Price float64 `json:"price"`
+	Height     int64     `json:"height"`
+	Balance    sdk.Coin  `json:"balance"`
+	Staked     sdk.Coin  `json:"staked"`
+	Rewards    sdk.Coin  `json:"rewards"`
+	Commission sdk.Coin  `json:"commission"`
+	Time       time.Time `json:"time"`
+	Price      float64   `json:"price"`
 }
 
-func getHeightData(height int64, addr sdk.AccAddress, endpoint string) (accountBlockData, error) {
+func getHeightData(height int64, addr sdk.AccAddress, endpoint, chainid, denom string, t time.Time) (accountBlockData, error) {
 	var (
 		val                = sdk.ValAddress(addr)
 		eg                 = errgroup.Group{}
@@ -94,48 +100,51 @@ func getHeightData(height int64, addr sdk.AccAddress, endpoint string) (accountB
 	)
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			com, err = getCommissionBalance(val, height, endpoint)
+			com, err = getCommissionBalance(val, height, endpoint, chainid, denom)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			bal, err = getAccountBalance(addr, height, endpoint)
+			bal, err = getAccountBalance(addr, height, endpoint, chainid, denom)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			rew, err = getRewardsBalance(addr, height, endpoint)
+			rew, err = getRewardsBalance(addr, height, endpoint, chainid, denom)
 			return err
 		})
 	})
 	eg.Go(func() error {
 		return retry.Do(func() error {
-			stk, err = getStakedBalance(addr, height, endpoint)
+			stk, err = getStakedBalance(addr, height, endpoint, chainid, denom)
 			return err
 		})
 	})
-	return accountBlockData{height, bal, stk, rew, com, 0}, nil
+	if err := eg.Wait(); err != nil {
+		return accountBlockData{}, err
+	}
+	return accountBlockData{height, bal, stk, rew, com, t, 0}, nil
 }
 
 // account balance
-func getAccountBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Coin, error) {
-	cli := ctx(height, endpoint)
+func getAccountBalance(acc sdk.AccAddress, height int64, endpoint, chainid, denom string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint, chainid)
 	accGetter := authtypes.NewAccountRetriever(cli)
 	res, err := accGetter.GetAccount(acc)
 	if err != nil {
 		return sdk.Coin{}, err
 	}
 
-	return sdk.NewCoin("ukava", res.GetCoins().AmountOf("ukava")), nil
+	return sdk.NewCoin(denom, res.GetCoins().AmountOf(denom)), nil
 }
 
 // rewards
-func getRewardsBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Coin, error) {
-	cli := ctx(height, endpoint)
+func getRewardsBalance(acc sdk.AccAddress, height int64, endpoint, chainid, denom string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint, chainid)
 	params := disttypes.NewQueryDelegatorParams(acc)
-	bz, err := cdc.MarshalJSON(params)
+	bz, err := json.Marshal(params)
 	if err != nil {
 		return sdk.Coin{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
@@ -151,44 +160,45 @@ func getRewardsBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.C
 	if err = cdc.UnmarshalJSON(res, &result); err != nil {
 		return sdk.Coin{}, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-	out := sdk.NewCoin("ukava", sdk.ZeroInt())
+	out := sdk.NewCoin(denom, sdk.ZeroInt())
 	for _, r := range result.Rewards {
-		out.Amount = out.Amount.Add(r.Reward.AmountOf("ukava").RoundInt())
+		out.Amount = out.Amount.Add(r.Reward.AmountOf(denom).RoundInt())
 	}
 	return out, nil
 }
 
 // commission
-func getCommissionBalance(val sdk.ValAddress, height int64, endpoint string) (sdk.Coin, error) {
-	cli := ctx(height, endpoint)
+func getCommissionBalance(val sdk.ValAddress, height int64, endpoint, chainid, denom string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint, chainid)
 	res, err := distcommon.QueryValidatorCommission(cli, "distribution", val)
 	if err != nil {
 		return sdk.Coin{}, err
 	}
 	var valCom disttypes.ValidatorAccumulatedCommission
 	cdc.MustUnmarshalJSON(res, &valCom)
-	return sdk.NewCoin("ukava", valCom.AmountOf("ukava").RoundInt()), nil
+	return sdk.NewCoin(denom, valCom.AmountOf(denom).RoundInt()), nil
 }
 
 // staked tokens
-func getStakedBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Coin, error) {
-	cli := ctx(height, endpoint)
-	bz, err := cdc.MarshalJSON(staktypes.NewQueryDelegatorParams(acc))
+func getStakedBalance(acc sdk.AccAddress, height int64, endpoint, chainid, denom string) (sdk.Coin, error) {
+	cli := ctx(height, endpoint, chainid)
+	params := staketypes.NewQueryDelegatorParams(acc)
+	bz, err := json.Marshal(params)
 	if err != nil {
 		return sdk.Coin{}, err
 	}
 
-	route := fmt.Sprintf("custom/staking/%s", staktypes.QueryDelegatorDelegations)
+	route := fmt.Sprintf("custom/staking/%s", staketypes.QueryDelegatorDelegations)
 	res, _, err := cli.QueryWithData(route, bz)
 	if err != nil {
 		return sdk.Coin{}, err
 	}
 
-	var resp staktypes.DelegationResponses
+	var resp staketypes.DelegationResponses
 	if err := cdc.UnmarshalJSON(res, &resp); err != nil {
 		return sdk.Coin{}, err
 	}
-	out := sdk.NewCoin("ukava", sdk.ZeroInt())
+	out := sdk.NewCoin(denom, sdk.ZeroInt())
 	for _, d := range resp {
 		out.Amount = out.Amount.Add(d.Balance.Amount)
 	}
@@ -196,7 +206,7 @@ func getStakedBalance(acc sdk.AccAddress, height int64, endpoint string) (sdk.Co
 }
 
 func getStatus(endpoint string) (*ctypes.ResultStatus, error) {
-	return ctx(0, endpoint).Client.Status()
+	return ctx(0, endpoint, "").Client.Status()
 }
 
 func nbh(startBlock *ctypes.ResultBlock, nextDate time.Time, secpb float64) int64 {
@@ -223,17 +233,17 @@ func midnight(t0 time.Time) time.Time {
 	return time.Date(t0.Year(), t0.Month(), t0.Day(), 0, 0, 0, 0, t0.Location())
 }
 
-func ctx(height int64, endpoint string) client.CLIContext {
+func ctx(height int64, endpoint, chainid string) client.CLIContext {
 	rpc, err := rpchttp.New(endpoint, "/websocket")
 	if err != nil {
 		log.Fatal(err)
 	}
 	return client.CLIContext{
 		Client:       rpc,
-		ChainID:      "kava-7",
+		ChainID:      chainid,
 		Input:        os.Stdin,
 		Output:       os.Stdout,
-		Codec:        cdc,
+		Codec:        simapp.MakeCodec(),
 		OutputFormat: "json",
 		Height:       height,
 		TrustNode:    true,
