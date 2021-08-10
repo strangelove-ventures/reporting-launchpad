@@ -102,6 +102,7 @@ func getHeightData(height int64, addr sdk.AccAddress, endpoint, chainid, denom s
 		return retry.Do(func() error {
 			com, err = getCommissionBalance(val, height, endpoint, chainid, denom)
 			fmt.Println("getCommissionBalance", err)
+			fmt.Println(height)
 			return err
 		})
 	})
@@ -123,6 +124,7 @@ func getHeightData(height int64, addr sdk.AccAddress, endpoint, chainid, denom s
 		return retry.Do(func() error {
 			stk, err = getStakedBalance(addr, height, endpoint, chainid, denom)
 			fmt.Println("getStakedBalance", err)
+			fmt.Println(height)
 			return err
 		})
 	})
